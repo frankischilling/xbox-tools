@@ -4,9 +4,10 @@ Collection of small Python command-line utilities to help when working with Xbox
 
 This repository currently contains three focused scripts written in Python:
 
-- `rename.py` — clean and limit filenames for FATX-like targets (e.g. Xbox file systems).
-- `unzip_1.py` — recursively extract ZIP and RAR archives in-place, flattening internal paths.
-- `flatten_to_root.py` — move all files from subfolders into a single root folder.
+- `scripts/rename.py` — clean and limit filenames for FATX-like targets (e.g. Xbox file systems).
+- `scripts/unzip_1.py` — recursively extract ZIP and RAR archives in-place, flattening internal paths.
+- `scripts/flatten_to_root.py` — move all files from subfolders into a single root folder.
+- `scripts/convert.py` — recursively convert various audio files to Xbox-compatible 16-bit PCM WAV format.
 
 ## Requirements
 
@@ -17,7 +18,7 @@ This repository currently contains three focused scripts written in Python:
 
 Make the scripts executable if you prefer:
 ```bash
-chmod +x rename.py unzip_1.py flatten_to_root.py
+chmod +x scripts/rename.py scripts/unzip_1.py scripts/flatten_to_root.py scripts/convert.py
 ```
 
 ## Installation
@@ -61,16 +62,16 @@ Config
 Usage
 ```bash
 # run from the directory you want to process
-python3 rename.py
+python3 scripts/rename.py
 
 # or (if executable)
-./rename.py
+./scripts/rename.py
 ```
 
 Example
 ```bash
 cd /path/to/roms
-python3 rename.py
+python3 scripts/rename.py
 ```
 
 Notes
@@ -95,7 +96,7 @@ Behavior and features
 
 Usage
 ```bash
-python3 unzip_1.py [ROOT] [-p PASSWORD] [--delete]
+python3 scripts/unzip_1.py [ROOT] [-p PASSWORD] [--delete]
 ```
 
 Options
@@ -106,13 +107,13 @@ Options
 Examples
 ```bash
 # extract everything in current directory and subfolders
-python3 unzip_1.py
+python3 scripts/unzip_1.py
 
 # extract a specific folder and delete archives afterwards
-python3 unzip_1.py /path/to/collection --delete
+python3 scripts/unzip_1.py /path/to/collection --delete
 
 # extract and provide RAR password
-python3 unzip_1.py /path/to/collection -p "secret"
+python3 scripts/unzip_1.py /path/to/collection -p "secret"
 ```
 
 Notes
@@ -137,20 +138,65 @@ Behavior
 Usage
 ```bash
 # run in the folder you want to flatten
-python3 flatten_to_root.py
+python3 scripts/flatten_to_root.py
 
 # or (if executable)
-./flatten_to_root.py
+./scripts/flatten_to_root.py
 ```
 
 Example
 ```bash
 cd /path/to/collection
-python3 flatten_to_root.py
+python3 scripts/flatten_to_root.py
 ```
 
 Notes
 - This is a destructive reorganization (files are moved). Back up or test on a copy first.
+
+---
+
+### convert.py
+
+Purpose
+- Recursively convert audio files (e.g. MP3, FLAC, AAC, M4A, OGG, WMA, and more) to 16-bit PCM WAV format, compatible with Xbox tools and devices.
+- Optionally delete the original file only after successful conversion and matching duration.
+- Intended for batch-prepping audio assets for Xbox modding and homebrew.
+
+Features
+- Converts a wide range of common formats to `.wav` using `ffmpeg` and `ffprobe` (`.wav` inputs are skipped).
+- Option to keep original files (`--keep`), preview without making changes (`--dry-run`), or overwrite existing `.wav` files (`--overwrite`).
+- Supports custom sample rate (`--sample-rate N`) and number of channels (`--channels N`, default 2).
+- Compares in/out durations (if available) for safety before deleting the original.
+- Prints a summary (converted, skipped, deleted, errors).
+
+Requirements
+- Requires `ffmpeg` and `ffprobe` in your PATH.
+
+Usage
+```bash
+python3 scripts/convert.py /path/to/audio [--keep] [--dry-run] [--overwrite] [--sample-rate N] [--channels N]
+```
+
+Examples
+```bash
+# Convert all supported audio files recursively inside ./music to WAV, delete originals if successful
+python3 scripts/convert.py ./music
+
+# Convert, but keep original files
+python3 scripts/convert.py ./music --keep
+
+# Resample to 48000 Hz and force stereo output
+python3 scripts/convert.py ./music --sample-rate 48000 --channels 2
+
+# Only preview what would be done
+python3 scripts/convert.py ./music --dry-run
+```
+
+Notes
+- Only originals with successful and duration-matching conversions are deleted (unless --keep is used).
+- Backup your data before bulk converting/moving audio files.
+- This script modifies files in-place. Use --dry-run to preview actions safely.
+- Useful for preparing soundtrack or audio sets for emulators, custom dashboards, or homebrew running on Xbox hardware.
 
 ## Safety & recommendations
 
@@ -162,19 +208,23 @@ Notes
 
 ## Example workflows
 
-Prepare ROMs for an Xbox-style device:
+Prepare ROMs or audio for an Xbox-style device:
 1. Extract archives into their folders:
 ```bash
-python3 unzip_1.py /path/to/raw_archives
+python3 scripts/unzip_1.py /path/to/raw_archives
 ```
 2. Flatten nested files into a single folder (if desired):
 ```bash
 cd /path/to/raw_archives
-python3 flatten_to_root.py
+python3 scripts/flatten_to_root.py
 ```
-3. Clean filenames for FATX:
+3. Convert audio files to WAV format for Xbox:
 ```bash
-python3 rename.py
+python3 scripts/convert.py /path/to/your/audio
+```
+4. Clean filenames for FATX:
+```bash
+python3 scripts/rename.py
 ```
 
 ## Development & contributions
