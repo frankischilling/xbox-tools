@@ -1,32 +1,25 @@
 #!/usr/bin/env python3
 """
-to_wav.py — Recursively convert all audio files under a path to WAV
-(PCM 16-bit), then delete originals *only if* conversion succeeds.
+to_wav_xboxsafe.py — Recursively convert all audio to Xbox 360–compatible WAV
+(PCM 16-bit LE, mono, 44100 Hz, no metadata). If the source is already .wav,
+it is normalized IN-PLACE via a temporary .wav file to avoid ffmpeg "same as input" errors.
 
 Usage:
-  python3 to_wav.py /path/to/root
-  python3 to_wav.py . --overwrite
-  python3 to_wav.py /music --keep --sample-rate 48000
-
-Flags:
-  --keep           Keep originals (do not delete after conversion)
-  --overwrite      Overwrite existing .wav files if present
-  --dry-run        Show what would happen, make no changes
-  --sample-rate N  Resample to N Hz (omit to preserve original)
-  --channels N     Force N channels (default 2)
+  python3 to_wav_xboxsafe.py /path --overwrite
+  python3 to_wav_xboxsafe.py /path --dry-run
+  python3 to_wav_xboxsafe.py . --keep
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 SUPPORTED_EXTS = {
     ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma", ".wv",
-    ".aif", ".aiff", ".aifc", ".mp2", ".ac3", ".mka", ".mkv", ".mp4", ".m4b"
+    ".aif", ".aiff", ".aifc", ".mp2", ".ac3", ".mka", ".mkv", ".mp4", ".m4b", ".wav"
 }
-# We skip .wav inputs by default.
-SKIP_EXTS = {".wav"}
 
 def have_tool(name: str) -> bool:
     return shutil.which(name) is not None
@@ -34,54 +27,58 @@ def have_tool(name: str) -> bool:
 def run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-def get_duration_seconds(path: Path) -> float | None:
-    # Returns float seconds or None if unknown
-    p = run(["ffprobe", "-v", "error",
-             "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1",
-             str(path)])
-    if p.returncode != 0:
-        return None
-    try:
-        return float(p.stdout.strip())
-    except (ValueError, AttributeError):
-        return None
+def ffmpeg_xboxsafe_cmd(src: Path, dst: Path, overwrite: bool) -> list[str]:
+    return [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-i", str(src),
+        "-acodec", "pcm_s16le",  # 16-bit PCM LE
+        "-ac", "1",              # mono
+        "-ar", "44100",          # 44.1 kHz
+        "-map_metadata", "-1",   # strip all metadata
+        "-f", "wav",             # force WAV muxer (works for temp files)
+        "-y" if overwrite else "-n",
+        str(dst),
+    ]
 
-def convert_to_wav(src: Path, dst: Path, sample_rate: int | None, channels: int, overwrite: bool) -> tuple[bool, str]:
-    # Build ffmpeg command
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
-    if not overwrite:
-        cmd += ["-n"]   # don't overwrite
-    else:
-        cmd += ["-y"]   # overwrite
-    cmd += ["-i", str(src), "-vn"]  # ensure audio only
-
-    # Force PCM 16-bit LE WAV
-    cmd += ["-acodec", "pcm_s16le", "-ac", str(channels)]
-    if sample_rate:
-        cmd += ["-ar", str(sample_rate)]
-
-    cmd += [str(dst)]
-
-    p = run(cmd)
+def convert_other_to_wav(src: Path, dst: Path, overwrite: bool) -> tuple[bool, str]:
+    p = run(ffmpeg_xboxsafe_cmd(src, dst, overwrite))
     ok = (p.returncode == 0) and dst.exists()
     return ok, p.stderr.strip()
 
+def normalize_wav_inplace(src: Path) -> tuple[bool, str]:
+    # Write to a .wav temp, then atomically replace the original
+    tmp = src.with_name(src.name + ".x360tmp.wav")
+    try:
+        if tmp.exists():
+            tmp.unlink()
+        p = run(ffmpeg_xboxsafe_cmd(src, tmp, True))  # allow overwrite of tmp
+        if p.returncode != 0 or not tmp.exists():
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+            return False, p.stderr.strip()
+        os.replace(tmp, src)  # atomic replace
+        return True, ""
+    except Exception as e:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        return False, str(e)
+
 def main():
-    ap = argparse.ArgumentParser(description="Recursively convert audio to WAV and delete originals on success.")
+    ap = argparse.ArgumentParser(description="Convert audio to Xbox-safe WAV (16-bit, mono, 44.1 kHz, no metadata).")
     ap.add_argument("root", nargs="?", default=".", help="Root directory to scan")
-    ap.add_argument("--keep", action="store_true", help="Keep originals (do not delete)")
-    ap.add_argument("--overwrite", action="store_true", help="Overwrite existing .wav files")
+    ap.add_argument("--keep", action="store_true", help="Keep originals (for non-wav sources)")
+    ap.add_argument("--overwrite", action="store_true", help="Overwrite/normalize existing .wav files in place")
     ap.add_argument("--dry-run", action="store_true", help="Preview actions; make no changes")
-    ap.add_argument("--sample-rate", type=int, default=None, help="Resample to N Hz (e.g., 44100, 48000)")
-    ap.add_argument("--channels", type=int, default=2, help="Number of output channels (default: 2)")
     args = ap.parse_args()
 
-    # Tool checks
-    for tool in ("ffmpeg", "ffprobe"):
-        if not have_tool(tool):
-            print(f"ERROR: '{tool}' not found in PATH. Install ffmpeg package and try again.")
-            return
+    if not have_tool("ffmpeg"):
+        print("ERROR: 'ffmpeg' not found in PATH. Install ffmpeg.")
+        return
 
     root = Path(args.root).resolve()
     if not root.exists():
@@ -90,71 +87,71 @@ def main():
 
     to_process: list[Path] = []
     for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        suf = p.suffix.lower()
-        if suf in SKIP_EXTS:
-            continue
-        if suf in SUPPORTED_EXTS:
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS:
             to_process.append(p)
 
-    converted = 0
-    deleted = 0
-    skipped = 0
-    errors = 0
-
     print(f"Scanning: {root}")
-    print(f"Found {len(to_process)} candidate audio file(s).")
+    print(f"Found {len(to_process)} audio file(s).")
+
+    converted = deleted = skipped = errors = 0
 
     for src in to_process:
-        dst = src.with_suffix(".wav")
+        ext = src.suffix.lower()
 
+        if ext == ".wav":
+            if not args.overwrite:
+                print(f"[skip] {src} exists (use --overwrite to normalize in place)")
+                skipped += 1
+                continue
+
+            print(f"[normalize] {src} (mono/44.1k/16-bit/no-metadata)")
+            if args.dry_run:
+                converted += 1
+                continue
+
+            ok, err = normalize_wav_inplace(src)
+            if not ok:
+                print(f"[error] {src}: {err}")
+                errors += 1
+            else:
+                converted += 1
+            continue
+
+        # Non-WAV → convert to WAV (Xbox-safe)
+        dst = src.with_suffix(".wav")
         if dst.exists() and not args.overwrite:
-            print(f"[skip] WAV exists: {dst}")
+            print(f"[skip] {dst} exists (use --overwrite to replace)")
             skipped += 1
             continue
 
-        # Safety: measure input duration if available
-        in_dur = get_duration_seconds(src)
-
-        print(f"[convert] {src} -> {dst}")
+        print(f"[convert] {src} → {dst}")
         if args.dry_run:
             converted += 1
             if not args.keep:
                 deleted += 1
             continue
 
-        ok, err = convert_to_wav(src, dst, args.sample_rate, args.channels, args.overwrite)
+        ok, err = convert_other_to_wav(src, dst, True)  # allow overwrite for the target
         if not ok:
-            print(f"[error] Conversion failed: {src}\n        {err}")
+            print(f"[error] {src}: {err}")
             errors += 1
             continue
 
-        # Verify output duration roughly matches input (if both known)
-        out_dur = get_duration_seconds(dst)
-        if in_dur is not None and out_dur is not None:
-            # allow a small tolerance (1.0s) for container/rounding differences
-            if abs(in_dur - out_dur) > 1.0 and out_dur > 0.0:
-                print(f"[warn] Duration mismatch (in={in_dur:.2f}s, out={out_dur:.2f}s). Keeping original for safety: {src}")
-                skipped += 1
-                continue
-
         converted += 1
-
         if not args.keep:
             try:
                 src.unlink()
                 deleted += 1
-                print(f"[delete] Original removed: {src}")
+                print(f"[delete] {src}")
             except Exception as e:
-                print(f"[error] Could not delete original: {src} ({e})")
+                print(f"[error] Couldn’t delete {src}: {e}")
                 errors += 1
 
     print("\n=== Summary ===")
-    print(f"Converted: {converted}")
-    print(f"Deleted originals: {deleted}{' (dry-run)' if args.dry_run and not args.keep else ''}")
-    print(f"Skipped: {skipped}")
-    print(f"Errors: {errors}")
+    print(f"Converted/normalized: {converted}")
+    print(f"Deleted originals:    {deleted}")
+    print(f"Skipped:              {skipped}")
+    print(f"Errors:               {errors}")
 
 if __name__ == "__main__":
     main()
