@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-to_wav_xboxsafe.py — Recursively convert all audio to Xbox 360–compatible WAV
+conveert.py — Recursively convert all audio to Xbox 360–compatible WAV
 (PCM 16-bit LE, mono, 44100 Hz, no metadata). If the source is already .wav,
 it is normalized IN-PLACE via a temporary .wav file to avoid ffmpeg "same as input" errors.
 
